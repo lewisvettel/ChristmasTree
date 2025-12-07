@@ -1,9 +1,10 @@
-name: Deploy HTML Project
+name: HTML Project Deployment & Preview
 on:
   push:
     branches: [ master ]
   pull_request:
     branches: [ master ]
+  workflow_dispatch:  # 允许手动触发
 
 jobs:
   build-and-test:
@@ -73,3 +74,111 @@ jobs:
           echo "🎉 HTML project build and validation completed successfully!"
           echo "Project structure:"
           ls -la
+
+  preview:
+    runs-on: ubuntu-latest
+    needs: build-and-test  # 依赖build任务成功
+    if: github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch'  # 只在PR或手动触发时运行
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Start HTTP server
+        run: |
+          echo "🚀 Starting HTTP server on port 8080..."
+          # 使用Python启动简单的HTTP服务器
+          python3 -m http.server 8080 &
+          SERVER_PID=$!
+          echo "HTTP server started with PID: $SERVER_PID"
+
+          # 等待服务器启动
+          sleep 2
+
+          # 检查服务器是否运行
+          if curl -s http://localhost:8080/ > /dev/null; then
+            echo "✅ HTTP server is running"
+          else
+            echo "❌ HTTP server failed to start"
+            exit 1
+          fi
+
+          # 保存PID供后续使用
+          echo "SERVER_PID=$SERVER_PID" >> $GITHUB_ENV
+
+      - name: Setup ngrok for public access
+        run: |
+          echo "🌐 Setting up ngrok for public access..."
+
+          # 下载ngrok
+          wget -q https://bin.equinox.io/c/bNyj1mQVY4c/ngrok-v3-stable-linux-amd64.tgz
+          tar -xzf ngrok-v3-stable-linux-amd64.tgz
+          chmod +x ngrok
+
+          # 设置ngrok认证令牌（需要先在GitHub仓库设置secrets.NGROK_AUTH_TOKEN）
+          if [ -n "${{ secrets.NGROK_AUTH_TOKEN }}" ]; then
+            ./ngrok config add-authtoken "${{ secrets.NGROK_AUTH_TOKEN }}"
+            echo "✅ ngrok authtoken configured"
+          else
+            echo "⚠️  No NGROK_AUTH_TOKEN secret found. Using anonymous ngrok (limited)"
+          fi
+
+          # 启动ngrok隧道
+          echo "🔗 Starting ngrok tunnel..."
+          ./ngrok http 8080 --log=stdout > ngrok.log &
+          NGROK_PID=$!
+          echo "NGROK_PID=$NGROK_PID" >> $GITHUB_ENV
+
+          # 等待ngrok启动
+          sleep 5
+
+          # 获取公网URL
+          PUBLIC_URL=$(grep -o 'https://[0-9a-z]*\.ngrok-free\.app' ngrok.log | head -1 || true)
+          if [ -n "$PUBLIC_URL" ]; then
+            echo "🌍 Public URL: $PUBLIC_URL"
+            echo "PUBLIC_URL=$PUBLIC_URL" >> $GITHUB_ENV
+
+            # 在PR评论中添加预览链接（如果是PR）
+            if [ "$GITHUB_EVENT_NAME" = "pull_request" ]; then
+              echo "Adding preview URL to PR..."
+              # 这里可以添加自动评论PR的逻辑
+            fi
+          else
+            echo "❌ Failed to get public URL from ngrok"
+            cat ngrok.log
+          fi
+
+      - name: Keep preview running
+        run: |
+          echo "⏰ Keeping preview running for 30 minutes..."
+          echo "Public URL: $PUBLIC_URL"
+          echo "You can access your HTML project at: $PUBLIC_URL"
+          echo ""
+          echo "To stop the preview, cancel this workflow run."
+          echo ""
+          echo "Server will automatically stop after 30 minutes or when workflow is cancelled."
+
+          # 运行30分钟（1800秒）
+          for i in {1..180}; do
+            echo "⏳ Running for $(($i * 10)) seconds..."
+            sleep 10
+          done
+
+          echo "🕒 30 minutes elapsed, stopping preview..."
+
+      - name: Cleanup
+        if: always()
+        run: |
+          echo "🧹 Cleaning up..."
+
+          # 停止ngrok
+          if [ -n "$NGROK_PID" ]; then
+            echo "Stopping ngrok (PID: $NGROK_PID)..."
+            kill $NGROK_PID 2>/dev/null || true
+          fi
+
+          # 停止HTTP服务器
+          if [ -n "$SERVER_PID" ]; then
+            echo "Stopping HTTP server (PID: $SERVER_PID)..."
+            kill $SERVER_PID 2>/dev/null || true
+          fi
+
+          echo "✅ Cleanup completed"
