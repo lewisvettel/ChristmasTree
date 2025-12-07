@@ -1,21 +1,75 @@
-name: Preview
-on: pull_request
+name: Deploy HTML Project
+on:
+  push:
+    branches: [ master ]
+  pull_request:
+    branches: [ master ]
+
 jobs:
-  serve:
+  build-and-test:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Serve via ngrok
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+
+      - name: Install dependencies (if any)
         run: |
-          # 装个最小 HTTP 服务器
-          python3 -m http.server 8080 &
-          # 把 8080 映射到公网
-          curl -s https://ngrok-agent.s3.amazonaws.com/ngrok.zip -o ngrok.zip
-          unzip ngrok.zip
-          ./ngrok authtoken ${{ secrets.NGROK_TOKEN }}
-          ./ngrok http 8080 --log=stdout | tee ngrok.log &
-          sleep 5
-          PUBLIC_URL=$(grep -o 'https://[0-9a-z]*\.ngrok\.io' ngrok.log | head -1)
-          echo "🌍 Live preview: $PUBLIC_URL"
-          # 让 job 持续 5 分钟
-          sleep 1000
+          if [ -f "package.json" ]; then
+            npm ci
+          else
+            echo "No package.json found, skipping npm install"
+          fi
+
+      - name: Validate HTML
+        run: |
+          # Check if index.html exists
+          if [ -f "index.html" ]; then
+            echo "✅ Found index.html"
+            # Simple HTML validation - check for basic structure
+            if grep -q "<!DOCTYPE html>" index.html && grep -q "<html" index.html; then
+              echo "✅ HTML structure looks good"
+            else
+              echo "⚠️  Warning: Basic HTML structure might be missing"
+            fi
+          else
+            echo "❌ No index.html found in root directory"
+            exit 1
+          fi
+
+      - name: Check HTML file
+        run: |
+          # Check file size
+          if [ -f "index.html" ]; then
+            FILESIZE=$(stat -c%s "index.html")
+            echo "📄 index.html file size: $FILESIZE bytes"
+
+            # Check for common HTML issues
+            echo "🔍 Checking HTML structure..."
+
+            # Check for required tags
+            REQUIRED_TAGS=("<!DOCTYPE html>" "<html" "<head>" "<body>")
+            for tag in "${REQUIRED_TAGS[@]}"; do
+              if grep -q "$tag" index.html; then
+                echo "✅ Found: $tag"
+              else
+                echo "⚠️  Missing: $tag"
+              fi
+            done
+
+            # Count elements
+            echo "📊 Element counts:"
+            echo "  <div> tags: $(grep -c "<div" index.html || echo 0)"
+            echo "  <p> tags: $(grep -c "<p>" index.html || echo 0)"
+            echo "  <img> tags: $(grep -c "<img" index.html || echo 0)"
+            echo "  <video> tags: $(grep -c "<video" index.html || echo 0)"
+          fi
+
+      - name: Build status
+        run: |
+          echo "🎉 HTML project build and validation completed successfully!"
+          echo "Project structure:"
+          ls -la
