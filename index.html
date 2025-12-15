@@ -34,10 +34,30 @@
 </body>
 
 <script type="text/javascript">
-    $(function () {
+    // 页面加载完成后自动播放视频
+    document.addEventListener('DOMContentLoaded', function() {
         var video = document.getElementById("video1");
-        video.src = "";
-        video.play();
+        if (video) {
+            // 确保视频可以播放
+            video.play().catch(function(error) {
+                console.log("视频播放失败:", error);
+                // 如果自动播放被阻止，显示播放按钮
+                var playButton = document.createElement('button');
+                playButton.textContent = '点击播放视频';
+                playButton.style.position = 'absolute';
+                playButton.style.top = '50%';
+                playButton.style.left = '50%';
+                playButton.style.transform = 'translate(-50%, -50%)';
+                playButton.style.padding = '15px 30px';
+                playButton.style.fontSize = '18px';
+                playButton.style.zIndex = '1000';
+                playButton.onclick = function() {
+                    video.play();
+                    playButton.style.display = 'none';
+                };
+                document.body.appendChild(playButton);
+            });
+        }
     });
 </script>
 </html>
